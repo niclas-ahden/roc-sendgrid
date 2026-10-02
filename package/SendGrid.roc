@@ -1,3 +1,7 @@
+import http.Request
+# Renamed because SendGrid.Response is the answer this package returns.
+import http.Response as HttpResponse
+
 ## SendGrid v3 mail send API client.
 ##
 ## The package cannot import platform modules, so the platform's HTTP send
@@ -5,30 +9,15 @@
 ## function, together with the API key:
 ##
 ## ```
-## client = SendGrid.init({ http_send!: http_send!, api_key: key })
+## client = SendGrid.init({ http_send!: Http.send!, api_key: key })
 ## SendGrid.send_email!(client, email)?
 ## ```
 ##
-## Here `http_send!` is a function of the app that sends the request through
-## the platform. It receives the request as this record:
-##
-## ```
-## {
-##     method : [POST],
-##     headers : List({ name : Str, value : Str }),
-##     uri : Str,
-##     body : List(U8),
-##     timeout_ms : [TimeoutMilliseconds(U64)],
-## }
-## ```
-##
-## It returns a `Try` whose `Ok` holds a record with at least the fields
-## `status : U16`, `headers : List({ name : Str, value : Str })` and
-## `body : List(U8)`. basic-cli's `Http.send!` takes and returns the
-## `Request` and `Response` of roc-lang/http instead, so with basic-cli
-## `http_send!` is a small adapter that converts both ways. The README shows
-## one. A platform whose `Http.send!` takes and returns these records could be
-## passed as is.
+## `http_send!` takes a `Request` of
+## [roc-lang/http](https://github.com/roc-lang/http) and returns a `Try`
+## whose `Ok` is a `Response` of the same package. basic-cli's `Http.send!` is
+## one, so it is passed as is. It can also be a function of the app, one that
+## logs, limits or fakes what is sent.
 ##
 ## The optional fields of [SendGrid.Client], [SendGrid.EmailAddress],
 ## [SendGrid.EmailRequest] and [SendGrid.TemplateEmailRequest] have defaults,
@@ -62,8 +51,8 @@ SendGrid := [].{
 	## A client with the given fields and the defaults for those left out:
 	##
 	## ```
-	## client = SendGrid.init({ http_send!: http_send!, api_key: key })
-	## eu_client = SendGrid.init({ http_send!: http_send!, api_key: key, base_url: "https://api.eu.sendgrid.com" })
+	## client = SendGrid.init({ http_send!: Http.send!, api_key: key })
+	## eu_client = SendGrid.init({ http_send!: Http.send!, api_key: key, base_url: "https://api.eu.sendgrid.com" })
 	## ```
 	##
 	## `init` returns the record it is given. What it adds is a type. Roc gives
@@ -80,7 +69,7 @@ SendGrid := [].{
 	## ```
 	## deps = {
 	##     db,
-	##     mailer: SendGrid.init({ http_send!: http_send!, api_key: key }),
+	##     mailer: SendGrid.init({ http_send!: Http.send!, api_key: key }),
 	## }
 	## ```
 	init : SendGrid.Client(send) -> SendGrid.Client(send)
@@ -286,30 +275,15 @@ content_json = |c|
 		Ok(("value", json_str(c.value))),
 	])
 
-## The HTTP request for a given JSON payload, in the shape the `http_send!`
-## hook receives.
-build_request :
-	Str,
-	{ api_key : Str, timeout_ms : U64, base_url : Str } -> {
-		method : [POST],
-		headers : List({ name : Str, value : Str }),
-		uri : Str,
-		body : List(U8),
-		timeout_ms : [TimeoutMilliseconds(U64)],
-	}
-build_request = |body_json, { api_key, timeout_ms, base_url }| {
-	method: POST,
-	headers: [
-		{ name: "Authorization", value: "Bearer ${api_key}" },
-		{ name: "Content-Type", value: "application/json" },
-	],
-	uri: "${base_url.drop_suffix("/")}/v3/mail/send",
-	body: Str.to_utf8(body_json),
-	timeout_ms: TimeoutMilliseconds(timeout_ms),
-}
-
-## The fields of the `http_send!` hook's answer that the package reads.
-HttpResponse : { status : U16, headers : List({ name : Str, value : Str }), body : List(U8) }
+## The HTTP request for a given JSON payload.
+build_request : Str, { api_key : Str, timeout_ms : U64, base_url : Str } -> Request
+build_request = |body_json, { api_key, timeout_ms, base_url }|
+	Request.from_method(POST)
+		.with_uri("${base_url.drop_suffix("/")}/v3/mail/send")
+		.add_header("Authorization", "Bearer ${api_key}")
+		.add_header("Content-Type", "application/json")
+		.with_body(Str.to_utf8(body_json))
+		.with_timeout(TimeoutMilliseconds(timeout_ms))
 
 ## Map the outcome of the HTTP send (the response on success, the transport
 ## error otherwise) to the package's result type. Any 2xx status is a
@@ -319,12 +293,15 @@ interpret_send_result :
 	-> Try(SendGrid.Response, [SendGridRejected(SendGrid.Rejection), SendGridHttpFailed(err)])
 interpret_send_result = |result|
 	match result {
-		Ok({ status, headers, body }) =>
+		Ok(response) => {
+			status = response.status()
+			headers = response.headers().map(|header| { name: header.name, value: header.value })
 			if status >= 200 and status < 300 {
 				Ok({ status, message_id: header_value(headers, "X-Message-Id") })
 			} else {
-				Err(SendGridRejected({ status, headers, body: Str.from_utf8_lossy(body) }))
+				Err(SendGridRejected({ status, headers, body: Str.from_utf8_lossy(response.body()) }))
 			}
+		}
 		Err(http_error) =>
 			Err(SendGridHttpFailed(http_error))
 	}
@@ -335,10 +312,10 @@ send_request! = |client, body_json| {
 	# the field is bound to a name first.
 	http_send! = client.http_send!
 	request = build_request(body_json, { api_key: client.api_key, timeout_ms: client.timeout_ms, base_url: client.base_url })
-	# A match rather than map_ok: the hook may return a structural Ok/Err
-	# union, which has no Try methods.
+	# A match rather than passing the answer on: the hook may return a
+	# structural Ok/Err union, which is not a Try.
 	match http_send!(request) {
-		Ok(response) => interpret_send_result(Ok({ status: response.status, headers: response.headers, body: response.body }))
+		Ok(response) => interpret_send_result(Ok(response))
 		Err(http_error) => interpret_send_result(Err(http_error))
 	}
 }
@@ -478,22 +455,22 @@ expect {
 
 client_settings = { api_key: "SG.key", timeout_ms: 15_000, base_url: "https://api.sendgrid.com" }
 
-expect build_request("{}", client_settings).uri == "https://api.sendgrid.com/v3/mail/send"
+expect build_request("{}", client_settings).uri() == "https://api.sendgrid.com/v3/mail/send"
 
-expect build_request("{}", { ..client_settings, base_url: "https://api.eu.sendgrid.com" }).uri == "https://api.eu.sendgrid.com/v3/mail/send"
+expect build_request("{}", { ..client_settings, base_url: "https://api.eu.sendgrid.com" }).uri() == "https://api.eu.sendgrid.com/v3/mail/send"
 
-expect build_request("{}", { ..client_settings, base_url: "http://localhost:8080/" }).uri == "http://localhost:8080/v3/mail/send"
+expect build_request("{}", { ..client_settings, base_url: "http://localhost:8080/" }).uri() == "http://localhost:8080/v3/mail/send"
 
-expect build_request("{}", client_settings).method == POST
+expect build_request("{}", client_settings).method_str() == "POST"
 
-expect build_request("{}", client_settings).headers == [
-	{ name: "Authorization", value: "Bearer SG.key" },
-	{ name: "Content-Type", value: "application/json" },
+expect build_request("{}", client_settings).headers().map(|header| header.to_str()) == [
+	"Authorization: Bearer SG.key",
+	"Content-Type: application/json",
 ]
 
-expect build_request("{\"x\":1}", client_settings).body == Str.to_utf8("{\"x\":1}")
+expect build_request("{\"x\":1}", client_settings).body() == Str.to_utf8("{\"x\":1}")
 
-expect build_request("{}", client_settings).timeout_ms == TimeoutMilliseconds(15_000)
+expect build_request("{}", client_settings).timeout() == TimeoutMilliseconds(15_000)
 
 # A client that leaves out timeout_ms and base_url gets the defaults.
 expect {
@@ -513,26 +490,26 @@ expect {
 
 expect {
 	ok : Try(HttpResponse, [NoTransportError])
-	ok = Ok({ status: 202, headers: [{ name: "X-Message-Id", value: "abc123" }], body: [] })
+	ok = Ok(HttpResponse.from_status(202).add_header("X-Message-Id", "abc123"))
 	interpret_send_result(ok) == Ok({ status: 202, message_id: "abc123" })
 }
 
 expect {
 	ok : Try(HttpResponse, [NoTransportError])
-	ok = Ok({ status: 200, headers: [], body: [] })
+	ok = Ok(HttpResponse.from_status(200))
 	interpret_send_result(ok) == Ok({ status: 200, message_id: "" })
 }
 
 expect {
 	ok : Try(HttpResponse, [NoTransportError])
-	ok = Ok({ status: 299, headers: [], body: [] })
+	ok = Ok(HttpResponse.from_status(299))
 	interpret_send_result(ok) == Ok({ status: 299, message_id: "" })
 }
 
 # Header names are compared ignoring case, as HTTP/2 sends them in lowercase.
 expect {
 	ok : Try(HttpResponse, [NoTransportError])
-	ok = Ok({ status: 202, headers: [{ name: "content-length", value: "0" }, { name: "x-message-id", value: "abc123" }], body: [] })
+	ok = Ok(HttpResponse.from_status(202).add_header("content-length", "0").add_header("x-message-id", "abc123"))
 	interpret_send_result(ok) == Ok({ status: 202, message_id: "abc123" })
 }
 
@@ -541,19 +518,19 @@ expect {
 
 expect {
 	informational : Try(HttpResponse, [NoTransportError])
-	informational = Ok({ status: 199, headers: [], body: [] })
+	informational = Ok(HttpResponse.from_status(199))
 	interpret_send_result(informational) == Err(SendGridRejected({ status: 199, headers: [], body: "" }))
 }
 
 expect {
 	redirect : Try(HttpResponse, [NoTransportError])
-	redirect = Ok({ status: 300, headers: [], body: [] })
+	redirect = Ok(HttpResponse.from_status(300))
 	interpret_send_result(redirect) == Err(SendGridRejected({ status: 300, headers: [], body: "" }))
 }
 
 expect {
 	forbidden : Try(HttpResponse, [NoTransportError])
-	forbidden = Ok({ status: 403, headers: [], body: Str.to_utf8("{\"errors\":[{\"message\":\"The from address does not match a verified Sender Identity.\"}]}") })
+	forbidden = Ok(HttpResponse.from_status(403).with_body(Str.to_utf8("{\"errors\":[{\"message\":\"The from address does not match a verified Sender Identity.\"}]}")))
 	interpret_send_result(forbidden) == Err(SendGridRejected({ status: 403, headers: [], body: "{\"errors\":[{\"message\":\"The from address does not match a verified Sender Identity.\"}]}" }))
 }
 
@@ -561,7 +538,7 @@ expect {
 # resets.
 expect {
 	rate_limited : Try(HttpResponse, [NoTransportError])
-	rate_limited = Ok({ status: 429, headers: [{ name: "x-ratelimit-reset", value: "1790000000" }], body: [] })
+	rate_limited = Ok(HttpResponse.from_status(429).add_header("x-ratelimit-reset", "1790000000"))
 	interpret_send_result(rate_limited) == Err(SendGridRejected({ status: 429, headers: [{ name: "x-ratelimit-reset", value: "1790000000" }], body: "" }))
 }
 

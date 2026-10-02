@@ -5,11 +5,14 @@
 ## roc-openapi instead of sending it.
 app [main!] {
 	pf: platform "https://github.com/niclas-ahden/basic-cli/releases/download/0.27.0/HZanbveSUDoJF8LypR663eH7PpaKEKG36eErEQzmV1Qs.tar.zst",
+	http: "https://github.com/roc-lang/http/releases/download/2.0.0/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst",
 	sendgrid: "../package/main.roc",
 	openapi: "https://github.com/niclas-ahden/roc-openapi/releases/download/0.2.0/J4TCLrSzmB2XKHN9BLxcREjG4LUUgkH4uUoMZcsy32Qm.tar.zst",
 }
 
 import pf.Stdout
+
+import http.Response
 
 import openapi.OpenApi
 
@@ -102,24 +105,19 @@ main! = |_args| {
 ## type's schema. An `Err(Missing)` that leaked into the JSON as text is
 ## refused before that.
 validate_instead_of_sending! = |api, request| {
-	body_str = Str.from_utf8_lossy(request.body)
+	body_str = Str.from_utf8_lossy(request.body())
 
 	if body_str.contains("Missing") {
 		Err(MissingLeaked(body_str))
 	} else {
-		method =
-			match request.method {
-				POST => "POST"
-			}
-
 		content_type =
-			request.headers
+			request.headers()
 				.find_first(|h| h.name == "Content-Type")
 				.map_ok(|h| h.value)
 				.ok_or("")
 
-		match api.validate_request({ method, path: request.uri, content_type, body: request.body }) {
-			Ok({}) => Ok({ status: 202, headers: [], body: [] })
+		match api.validate_request({ method: request.method_str(), path: request.uri(), content_type, body: request.body() }) {
+			Ok({}) => Ok(Response.from_status(202))
 			Err(Invalid(errors)) => Err(SchemaValidationFailed(errors.map(|error| error.to_str())))
 			Err(setup_error) => Err(ValidationSetupFailed(Str.inspect(setup_error)))
 		}

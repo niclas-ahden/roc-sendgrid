@@ -3,13 +3,15 @@
 ## shows what the hook receives. A hook like this one is also how you test
 ## code of your own that sends email.
 ##
-## The README has the hook that really sends, through basic-cli's `Http.send!`.
+## examples/send.roc really sends, with basic-cli's `Http.send!` as the hook.
 app [main!] {
 	pf: platform "https://github.com/niclas-ahden/basic-cli/releases/download/0.27.0/HZanbveSUDoJF8LypR663eH7PpaKEKG36eErEQzmV1Qs.tar.zst",
+	http: "https://github.com/roc-lang/http/releases/download/2.0.0/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst",
 	sendgrid: "../package/main.roc",
 }
 
 import pf.Stdout
+import http.Response
 import sendgrid.SendGrid
 
 main! = |_args| {
@@ -29,19 +31,19 @@ main! = |_args| {
 }
 
 print_instead_of_sending! = |request| {
-	Stdout.line!("${Str.inspect(request.method)} ${request.uri}")?
+	Stdout.line!("${request.method_str()} ${request.uri()}")?
 	# The Authorization header carries the API key, which must never reach a
 	# log, so a hook that prints requests leaves its value out.
-	for header in request.headers {
+	for header in request.headers() {
 		value = if header.name == "Authorization" "Bearer <redacted>" else header.value
 		Stdout.line!("${header.name}: ${value}")?
 	}
-	Stdout.line!("Timeout: ${Str.inspect(request.timeout_ms)}")?
+	Stdout.line!("Timeout: ${Str.inspect(request.timeout())}")?
 	Stdout.line!("")?
-	Stdout.line!(Str.from_utf8_lossy(request.body))?
+	Stdout.line!(Str.from_utf8_lossy(request.body()))?
 	Stdout.line!("")?
 
 	# What SendGrid answers when it accepts an email: 202, an empty body and
 	# the id it gave the email.
-	Ok({ status: 202, headers: [{ name: "X-Message-Id", value: "dry-run-message-id" }], body: [] })
+	Ok(Response.from_status(202).add_header("X-Message-Id", "dry-run-message-id"))
 }

@@ -7,23 +7,20 @@ Send emails via the [SendGrid v3 API](https://docs.sendgrid.com/api-reference/ma
 ```roc
 app [main!] {
 	pf: platform "https://github.com/niclas-ahden/basic-cli/releases/download/0.27.0/HZanbveSUDoJF8LypR663eH7PpaKEKG36eErEQzmV1Qs.tar.zst",
-	http: "https://github.com/roc-lang/http/releases/download/2.0.0/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst",
-	sendgrid: "https://github.com/niclas-ahden/roc-sendgrid/releases/download/0.2.0/GrjfRoQLxnW6G9hbugEyxFvciRFFAGW5v5Uqx4tsMakd.tar.zst",
+	sendgrid: "https://github.com/niclas-ahden/roc-sendgrid/releases/download/0.2.0/GFp74ugf9Z6f9GdeQFzoSRXXKdJpevmqR3AdjuRKwK3F.tar.zst",
 }
 
 import pf.Env
 import pf.Http
 import pf.OsStr
 import pf.Stdout
-import http.Request
-import http.Response
 import sendgrid.SendGrid
 
 main! = |_args|
 	match env_var!("SENDGRID_API_KEY") {
 		Err(_) => Stdout.line!("SENDGRID_API_KEY is not set, so nothing was sent.")
 		Ok(api_key) => {
-			client = SendGrid.init({ http_send!: http_send!, api_key })
+			client = SendGrid.init({ http_send!: Http.send!, api_key })
 
 			response = SendGrid.send_email!(
 				client,
@@ -40,25 +37,6 @@ main! = |_args|
 	}
 
 env_var! = |name| Env.var_str!(OsStr.from_str(name))
-
-# roc-sendgrid hands `http_send!` the request as a record, and basic-cli's
-# `Http.send!` takes the roc-lang/http `Request` and returns its `Response`,
-# so this converts the request into one and the answer back. The method is
-# always POST.
-http_send! = |req| {
-	request =
-		Request.from_method(POST)
-			.with_uri(req.uri)
-			.with_body(req.body)
-			.with_timeout(req.timeout_ms)
-	response = Http.send!(req.headers.fold(request, |acc, header| acc.add_header(header.name, header.value)))?
-
-	Ok({
-		status: Response.status(response),
-		headers: Response.headers(response).map(|header| { name: header.name, value: header.value }),
-		body: Response.body(response),
-	})
-}
 ```
 
 SendGrid only sends from a [verified sender](https://www.twilio.com/docs/sendgrid/ui/sending-email/sender-verification). When it refuses an email, the error says why:
@@ -80,7 +58,7 @@ The first argument of `send_email!` and `send_template_email!` is a `SendGrid.Cl
 
 | Field | Default | |
 | --- | --- | --- |
-| `http_send!` | | The function that sends the HTTP request |
+| `http_send!` | | The function that sends the HTTP request, like basic-cli's `Http.send!` |
 | `api_key` | | The SendGrid API key |
 | `timeout_ms` | `30_000` | How long a request may take, in milliseconds |
 | `base_url` | `"https://api.sendgrid.com"` | EU regional subusers set it to `"https://api.eu.sendgrid.com"` |
@@ -88,10 +66,10 @@ The first argument of `send_email!` and `send_template_email!` is a `SendGrid.Cl
 Build it once with `SendGrid.init` and pass it to every send:
 
 ```roc
-client = SendGrid.init({ http_send!: http_send!, api_key, base_url: "https://api.eu.sendgrid.com" })
+client = SendGrid.init({ http_send!: Http.send!, api_key, base_url: "https://api.eu.sendgrid.com" })
 ```
 
-Since you're passing in the `http_send!` effect you can make it do anything you'd like. You could limit it to certain URLs, log all requests, or not send requests at all like in [examples/dry_run.roc](examples/dry_run.roc).
+`http_send!` takes a `Request` of [roc-lang/http](https://github.com/roc-lang/http) and returns a `Try` whose `Ok` is a `Response` of the same package, like `Http.send!` of basic-cli does. Since you're passing in the `http_send!` effect you can make it do anything you'd like. You could limit it to certain URLs, log all requests, or not send requests at all like in [examples/dry_run.roc](examples/dry_run.roc).
 
 ## Building a request
 

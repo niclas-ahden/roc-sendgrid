@@ -7,9 +7,11 @@
 ## The OpenAPI test covers the payload and this covers everything else.
 app [main!] {
 	pf: platform "https://github.com/niclas-ahden/basic-cli/releases/download/0.27.0/HZanbveSUDoJF8LypR663eH7PpaKEKG36eErEQzmV1Qs.tar.zst",
+	http: "https://github.com/roc-lang/http/releases/download/2.0.0/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst",
 	sendgrid: "../package/main.roc",
 }
 
+import http.Response
 import sendgrid.SendGrid
 
 main! = |_args| {
@@ -62,16 +64,16 @@ email = {
 }
 
 fake_http_send! = |expected, request|
-	if request.uri != expected.uri {
-		Err(WrongUrl(request.uri))
-	} else if request.method != POST {
-		Err(WrongMethod)
-	} else if !(request.headers.any(|h| h.name == "Authorization" and h.value == "Bearer SG.my-secret-key")) {
+	if request.uri() != expected.uri {
+		Err(WrongUrl(request.uri()))
+	} else if request.method_str() != "POST" {
+		Err(WrongMethod(request.method_str()))
+	} else if !(request.headers().any(|h| h.name == "Authorization" and h.value == "Bearer SG.my-secret-key")) {
 		Err(WrongAuth)
-	} else if !(request.headers.any(|h| h.name == "Content-Type" and h.value == "application/json")) {
+	} else if !(request.headers().any(|h| h.name == "Content-Type" and h.value == "application/json")) {
 		Err(MissingContentType)
-	} else if request.timeout_ms != TimeoutMilliseconds(expected.timeout_ms) {
-		Err(WrongTimeout(request.timeout_ms))
+	} else if request.timeout() != TimeoutMilliseconds(expected.timeout_ms) {
+		Err(WrongTimeout(request.timeout()))
 	} else {
-		Ok({ status: 202, headers: [{ name: "X-Message-Id", value: "msg-1" }], body: [] })
+		Ok(Response.from_status(202).add_header("X-Message-Id", "msg-1"))
 	}
