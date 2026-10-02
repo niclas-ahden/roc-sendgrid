@@ -6,65 +6,149 @@ Send emails via the [SendGrid v3 API](https://docs.sendgrid.com/api-reference/ma
 
 ```roc
 app [main!] {
-    pf: platform "https://github.com/growthagent/basic-cli/releases/download/0.27.0/G-A6F5ny0IYDx4hmF3t_YPHUSR28c9ZXMBnh0FEJjwk.tar.br",
-    sendgrid: "https://github.com/niclas-ahden/roc-sendgrid/releases/download/0.1.0/HASH.tar.br",
-    json: "https://github.com/lukewilliamboswell/roc-json/releases/download/0.12.0/1trwx8sltQ-e9Y2rOB4LWUWLS_sFVyETK8Twl0i9qpw.tar.gz",
+	pf: platform "https://github.com/niclas-ahden/basic-cli/releases/download/0.27.0/HZanbveSUDoJF8LypR663eH7PpaKEKG36eErEQzmV1Qs.tar.zst",
+	http: "https://github.com/roc-lang/http/releases/download/2.0.0/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst",
+	sendgrid: "https://github.com/niclas-ahden/roc-sendgrid/releases/download/0.2.0/GrjfRoQLxnW6G9hbugEyxFvciRFFAGW5v5Uqx4tsMakd.tar.zst",
 }
 
+import pf.Env
 import pf.Http
-import json.Option
-
-import sendgrid.SendGrid {
-    http_send!: Http.send!,
-    http_header: Http.header,
-}
+import pf.OsStr
+import pf.Stdout
+import http.Request
+import http.Response
+import sendgrid.SendGrid
 
 main! = |_args|
-    session = { api_key: "SG.your-api-key" }
+	match env_var!("SENDGRID_API_KEY") {
+		Err(_) => Stdout.line!("SENDGRID_API_KEY is not set, so nothing was sent.")
+		Ok(api_key) => {
+			client = SendGrid.init({ http_send!: http_send!, api_key })
 
-    SendGrid.send_email!(
-        {
-            from: { email: "noreply@example.com", name: Option.none({}) },
-            recipients: {
-                to: [{ email: "user@example.com", name: Option.some("User") }],
-                cc: Option.none({}),
-                bcc: Option.none({}),
-            },
-            subject: "Hello from Roc!",
-            content: [{ type: "text/plain", value: "Sent via roc-sendgrid." }],
-            reply_to: Option.none({}),
-            template_id: Option.none({}),
-        },
-        session,
-    )
-    |> Result.map_ok(|_| {})
-    |> Result.map_err(
-        |SendGridError(msg)| Exit(1, msg),
-    )
+			response = SendGrid.send_email!(
+				client,
+				{
+					from: { email: env_var!("SENDGRID_FROM")? },
+					to: [{ email: env_var!("SENDGRID_TO")? }],
+					subject: "Hello from Roc!",
+					content: [{ mime_type: "text/plain", value: "Sent via roc-sendgrid." }],
+				},
+			)?
+
+			Stdout.line!("SendGrid accepted the email as ${response.message_id}")
+		}
+	}
+
+env_var! = |name| Env.var_str!(OsStr.from_str(name))
+
+# roc-sendgrid hands `http_send!` the request as a record, and basic-cli's
+# `Http.send!` takes the roc-lang/http `Request` and returns its `Response`,
+# so this converts the request into one and the answer back. The method is
+# always POST.
+http_send! = |req| {
+	request =
+		Request.from_method(POST)
+			.with_uri(req.uri)
+			.with_body(req.body)
+			.with_timeout(req.timeout_ms)
+	response = Http.send!(req.headers.fold(request, |acc, header| acc.add_header(header.name, header.value)))?
+
+	Ok({
+		status: Response.status(response),
+		headers: Response.headers(response).map(|header| { name: header.name, value: header.value }),
+		body: Response.body(response),
+	})
+}
 ```
 
-## Requirements
+SendGrid only sends from a [verified sender](https://www.twilio.com/docs/sendgrid/ui/sending-email/sender-verification). When it refuses an email, the error says why:
 
-- A platform that exposes HTTP sending (like [`growthagent/basic-cli`](https://github.com/growthagent/basic-cli))
-- A SendGrid API key
+```
+SendGridRejected({
+	body: "{\"errors\":[{\"message\":\"The from address does not match a verified Sender Identity. ...\"}]}",
+	headers: [
+		{ name: "content-type", value: "application/json" },
+		...
+	],
+	status: 403,
+})
+```
+
+## The client
+
+The first argument of `send_email!` and `send_template_email!` is a `SendGrid.Client`:
+
+| Field | Default | |
+| --- | --- | --- |
+| `http_send!` | | The function that sends the HTTP request |
+| `api_key` | | The SendGrid API key |
+| `timeout_ms` | `30_000` | How long a request may take, in milliseconds |
+| `base_url` | `"https://api.sendgrid.com"` | EU regional subusers set it to `"https://api.eu.sendgrid.com"` |
+
+Build it once with `SendGrid.init` and pass it to every send:
+
+```roc
+client = SendGrid.init({ http_send!: http_send!, api_key, base_url: "https://api.eu.sendgrid.com" })
+```
+
+Since you're passing in the `http_send!` effect you can make it do anything you'd like. You could limit it to certain URLs, log all requests, or not send requests at all like in [examples/dry_run.roc](examples/dry_run.roc).
+
+## Building a request
+
+```roc
+receipt : SendGrid.EmailRequest
+receipt = {
+	from: { email: "noreply@example.com", name: Ok("Example") },
+	to: [{ email: "user@example.com" }],
+	bcc: [{ email: "archive@example.com" }],
+	subject: "Your receipt",
+	content: [{ mime_type: "text/html", value: html }],
+}
+```
+
+| Field | Default | |
+| --- | --- | --- |
+| `name` of an address | `Err(Missing)` | `name: Ok("Name")` sets a display name |
+| `cc`, `bcc` | `[]` | An empty list is left out of the payload |
+| `reply_to` | `Err(Missing)` | `Ok({ email: ... })` sets one |
+| `categories` | `[]` | For filtering in SendGrid's statistics |
+
+Every recipient of a request gets the same email, and everyone in `to` and `cc` sees every address in both. Mail to people who should not see each other takes one request per recipient. So does template mail where each recipient has their own `dynamic_template_data`. We will support batch emailing in the future, please post an issue if that's a feature you'd like to see!
 
 ## API
 
 ### `send_email!`
 
-Send a plain text or HTML email. Supports to/cc/bcc recipients and optional reply-to.
+Send a plain text or HTML email. Any 2xx answer is `Ok({ status, message_id })`, where `message_id` is SendGrid's `X-Message-Id` header, the id its [Event Webhook](https://www.twilio.com/docs/sendgrid/for-developers/tracking-events/event) and Email Activity know the email by. The errors are:
+
+- `SendGridRejected({ status, headers, body })`: SendGrid answered with another status. `body` is its answer, which names the problem. `headers` are the answer's headers, like `X-RateLimit-Reset` on a 429, the Unix time at which the rate limit resets.
+- `SendGridHttpFailed(err)`: `http_send!` failed, with its own error as `err`.
 
 ### `send_template_email!`
 
-Send an email using a SendGrid dynamic template. Pass template variables via `dynamic_template_data`.
+Send an email using a SendGrid [dynamic template](https://www.twilio.com/docs/sendgrid/ui/sending-email/how-to-send-an-email-with-dynamic-templates). `dynamic_template_data` is the value the template's variables are read from, usually a record, encoded with the builtin `Json` module. Pass `{}` to a template without variables. Fails like `send_email!`.
+
+```roc
+response = SendGrid.send_template_email!(
+	client,
+	{
+		from: { email: "noreply@example.com" },
+		to: [{ email: "user@example.com" }],
+		template_id: "d-0123456789abcdef0123456789abcdef",
+		dynamic_template_data: { subject: "Your weekly report", first_name: "Anna", video_count: 3 },
+	},
+)?
+```
+
+The subject comes from the Subject setting of the template in SendGrid, so a template request has no `subject` field. To set it per email, write `{{subject}}` in that setting and pass `subject` in the data, as above. SendGrid ignores a subject sent beside a template that has its own, and `{{subject}}` never reads one.
+
+The data has to encode without failing, so data holding an `F32` or `F64`, which can be NaN or infinite, does not compile. The type error names `encode_f32` or `encode_f64`. Use `Dec` for fractional numbers.
 
 ## Testing
 
-Payload structure is validated against the [SendGrid OpenAPI spec](https://github.com/twilio/sendgrid-oai) using [roc-openapi](https://github.com/niclas-ahden/roc-openapi). Every payload variant (full, minimal, template, multi-recipient) is checked against the real API contract.
+The unit tests are the `expect`s in `package/`, run with `roc test package/main.roc`. The integration tests are the apps in `tests/`, run through [roc-spec](https://github.com/niclas-ahden/roc-spec) with `./tests.roc`. Both want the dev shell (`nix develop`). Pass a substring to run only the matching tests, like `./tests.roc transport`.
 
-## Status
-
-`roc-sendgrid` uses the old Rust-based Roc compiler, and will move to the new Zig-based one when possible.
+`tests/openapi_schema_test.roc` validates every payload variant (full, minimal, multiple recipients, and templates with and without the optional fields) against the [SendGrid OpenAPI spec](https://github.com/twilio/sendgrid-oai) in `spec/`, using [roc-openapi](https://github.com/niclas-ahden/roc-openapi).
 
 ## Documentation
 
