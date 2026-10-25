@@ -1,7 +1,7 @@
 ## A failing http_send! hook (the request never got an answer) is a
 ## SendGridHttpFailed error carrying the hook's own error.
 app [main!] {
-	pf: platform "https://github.com/niclas-ahden/basic-cli/releases/download/0.27.0/HZanbveSUDoJF8LypR663eH7PpaKEKG36eErEQzmV1Qs.tar.zst",
+	pf: platform "https://github.com/niclas-ahden/basic-cli/releases/download/0.30.0/6XAUy48Jp34GANurMrMf74DtF7NdpkhnqFLHE4gHNzJy.tar.zst",
 	sendgrid: "../package/main.roc",
 }
 

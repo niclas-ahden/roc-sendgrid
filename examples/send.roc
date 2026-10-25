@@ -5,7 +5,7 @@
 ##
 ## The README shows this app.
 app [main!] {
-	pf: platform "https://github.com/niclas-ahden/basic-cli/releases/download/0.27.0/HZanbveSUDoJF8LypR663eH7PpaKEKG36eErEQzmV1Qs.tar.zst",
+	pf: platform "https://github.com/niclas-ahden/basic-cli/releases/download/0.30.0/6XAUy48Jp34GANurMrMf74DtF7NdpkhnqFLHE4gHNzJy.tar.zst",
 	sendgrid: "../package/main.roc",
 }
 
@@ -19,7 +19,7 @@ main! = |_args|
 	match env_var!("SENDGRID_API_KEY") {
 		Err(_) => Stdout.line!("SENDGRID_API_KEY is not set, so nothing was sent.")
 		Ok(api_key) => {
-			client = SendGrid.init({ http_send!: Http.send!, api_key })
+			client = SendGrid.init({ http_send!: |request| Http.send!(request, {}), api_key })
 
 			response = SendGrid.send_email!(
 				client,
