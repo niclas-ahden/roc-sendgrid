@@ -7,7 +7,7 @@ app [main!] {
 	pf: platform "https://github.com/niclas-ahden/basic-cli/releases/download/0.30.0/6XAUy48Jp34GANurMrMf74DtF7NdpkhnqFLHE4gHNzJy.tar.zst",
 	http: "https://github.com/roc-lang/http/releases/download/2.0.0/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst",
 	sendgrid: "../package/main.roc",
-	openapi: "https://github.com/niclas-ahden/roc-openapi/releases/download/0.2.0/J4TCLrSzmB2XKHN9BLxcREjG4LUUgkH4uUoMZcsy32Qm.tar.zst",
+	openapi: "https://github.com/niclas-ahden/roc-openapi/releases/download/0.2.1/5fQEMmB1UxbMjEPV8QLzz5qztEM9dvCLtG93KHsYYZ8g.tar.zst",
 }
 
 import pf.Stdout
